@@ -3,7 +3,7 @@ import os
 import subprocess
 
 # Replaced with the current commit when building the wheels.
-_SKYPILOT_COMMIT_SHA = '{{SKYPILOT_COMMIT_SHA}}'
+_SKYPILOT_COMMIT_SHA = '9d0541594586b0b62a6c49ff0ed924eaae83f785'
 
 
 def get_git_commit():
