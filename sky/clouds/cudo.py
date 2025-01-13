@@ -1,8 +1,7 @@
 """Cudo Compute"""
-import json
 import subprocess
 import typing
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple, Union
 
 from sky import clouds
 from sky.clouds import service_catalog
@@ -43,8 +42,15 @@ class Cudo(clouds.Cloud):
         f'{_INDENT_PREFIX}  $ cudoctl init\n'
         f'{_INDENT_PREFIX}For more info: '
         # pylint: disable=line-too-long
-        'https://skypilot.readthedocs.io/en/latest/getting-started/installation.html'
-    )
+        'https://docs.skypilot.co/en/latest/getting-started/installation.html')
+
+    _PROJECT_HINT = (
+        'Create a project and then set it as the default project,:\n'
+        f'{_INDENT_PREFIX} $ cudoctl projects create my-project-name\n'
+        f'{_INDENT_PREFIX} $ cudoctl init\n'
+        f'{_INDENT_PREFIX}For more info: '
+        # pylint: disable=line-too-long
+        'https://docs.skypilot.co/en/latest/getting-started/installation.html')
 
     _CLOUD_UNSUPPORTED_FEATURES = {
         clouds.CloudImplementationFeatures.STOP: 'Stopping not supported.',
@@ -57,6 +63,10 @@ class Cudo(clouds.Cloud):
         clouds.CloudImplementationFeatures.DOCKER_IMAGE:
             ('Docker image is currently not supported on Cudo. You can try '
              'running docker command inside the `run` section in task.yaml.'),
+        clouds.CloudImplementationFeatures.HOST_CONTROLLERS: (
+            'Cudo Compute cannot host a controller as it does not '
+            'autostopping, which will leave the controller to run indefinitely.'
+        ),
     }
     _MAX_CLUSTER_NAME_LEN_LIMIT = 60
 
@@ -155,10 +165,6 @@ class Cudo(clouds.Cloud):
         # `return 0.0` is a good placeholder.)
         return 0.0
 
-    def is_same_cloud(self, other: clouds.Cloud) -> bool:
-        # Returns true if the two clouds are the same cloud type.
-        return isinstance(other, Cudo)
-
     @classmethod
     def get_default_instance_type(
             cls,
@@ -174,7 +180,7 @@ class Cudo(clouds.Cloud):
     def get_accelerators_from_instance_type(
         cls,
         instance_type: str,
-    ) -> Optional[Dict[str, int]]:
+    ) -> Optional[Dict[str, Union[int, float]]]:
         return service_catalog.get_accelerators_from_instance_type(
             instance_type, clouds='cudo')
 
@@ -185,18 +191,17 @@ class Cudo(clouds.Cloud):
     def make_deploy_resources_variables(
         self,
         resources: 'resources_lib.Resources',
-        cluster_name_on_cloud: str,
+        cluster_name: resources_utils.ClusterName,
         region: 'clouds.Region',
         zones: Optional[List['clouds.Zone']],
+        num_nodes: int,
         dryrun: bool = False,
     ) -> Dict[str, Optional[str]]:
-        del zones
+        del zones, cluster_name  # unused
         r = resources
         acc_dict = self.get_accelerators_from_instance_type(r.instance_type)
-        if acc_dict is not None:
-            custom_resources = json.dumps(acc_dict, separators=(',', ':'))
-        else:
-            custom_resources = None
+        custom_resources = resources_utils.make_ray_custom_resources_str(
+            acc_dict)
 
         return {
             'instance_type': resources.instance_type,
@@ -205,13 +210,16 @@ class Cudo(clouds.Cloud):
         }
 
     def _get_feasible_launchable_resources(
-            self, resources: 'resources_lib.Resources'):
+        self, resources: 'resources_lib.Resources'
+    ) -> 'resources_utils.FeasibleResources':
         if resources.use_spot:
-            return ([], [])
+            # TODO: Add hints to all return values in this method to help
+            #  users understand why the resources are not launchable.
+            return resources_utils.FeasibleResources([], [], None)
         if resources.instance_type is not None:
             assert resources.is_launchable(), resources
             resources = resources.copy(accelerators=None)
-            return ([resources], [])
+            return resources_utils.FeasibleResources([resources], [], None)
 
         def _make(instance_list):
             resource_list = []
@@ -234,9 +242,10 @@ class Cudo(clouds.Cloud):
                 memory=resources.memory,
                 disk_tier=resources.disk_tier)
             if default_instance_type is None:
-                return ([], [])
+                return resources_utils.FeasibleResources([], [], None)
             else:
-                return (_make([default_instance_type]), [])
+                return resources_utils.FeasibleResources(
+                    _make([default_instance_type]), [], None)
 
         assert len(accelerators) == 1, resources
         acc, acc_count = list(accelerators.items())[0]
@@ -251,8 +260,10 @@ class Cudo(clouds.Cloud):
             zone=resources.zone,
             clouds='cudo')
         if instance_list is None:
-            return ([], fuzzy_candidate_list)
-        return (_make(instance_list), fuzzy_candidate_list)
+            return resources_utils.FeasibleResources([], fuzzy_candidate_list,
+                                                     None)
+        return resources_utils.FeasibleResources(_make(instance_list),
+                                                 fuzzy_candidate_list, None)
 
     @classmethod
     def check_credentials(cls) -> Tuple[bool, Optional[str]]:
@@ -293,7 +304,9 @@ class Cudo(clouds.Cloud):
         project_id, error = cudo_api.get_project_id()
         if error is not None:
             return False, (
-                f'Error getting project '
+                f'Default project is not set. '
+                f'{cls._PROJECT_HINT}\n'
+                f'{cls._INDENT_PREFIX}'
                 f'{common_utils.format_exception(error, use_bracket=True)}')
         try:
             api = cudo_api.virtual_machines()
@@ -311,7 +324,7 @@ class Cudo(clouds.Cloud):
         }
 
     @classmethod
-    def get_current_user_identity(cls) -> Optional[List[str]]:
+    def get_user_identities(cls) -> Optional[List[List[str]]]:
         # NOTE: used for very advanced SkyPilot functionality
         # Can implement later if desired
         return None

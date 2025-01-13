@@ -25,7 +25,7 @@ def docker_start_cmds(
     docker_cmd,
 ):
     """Generating docker start command without --rm.
-    
+
     The code is borrowed from `ray.autoscaler._private.docker`.
 
     Changes we made:
@@ -65,8 +65,8 @@ def docker_start_cmds(
         '--cap-add=SYS_ADMIN',
         '--device=/dev/fuse',
         '--security-opt=apparmor:unconfined',
+        '--entrypoint=/bin/bash',
         image,
-        'bash',
     ]
     return ' '.join(docker_run)
 
@@ -159,19 +159,17 @@ class SkyDockerCommandRunner(DockerCommandRunner):
             return True
 
         # SkyPilot: Docker login if user specified a private docker registry.
-        if "docker_login_config" in self.docker_config:
+        if 'docker_login_config' in self.docker_config:
             # TODO(tian): Maybe support a command to get the login password?
-            docker_login_config: docker_utils.DockerLoginConfig = self.docker_config[
-                "docker_login_config"]
+            docker_login_config: docker_utils.DockerLoginConfig = (
+                self.docker_config['docker_login_config'])
             self._run_with_retry(
                 f'{self.docker_cmd} login --username '
                 f'{docker_login_config.username} --password '
                 f'{docker_login_config.password} {docker_login_config.server}')
             # We automatically add the server prefix to the image name if
             # the user did not add it.
-            server_prefix = f'{docker_login_config.server}/'
-            if not specific_image.startswith(server_prefix):
-                specific_image = f'{server_prefix}{specific_image}'
+            specific_image = docker_login_config.format_image(specific_image)
 
         if self.docker_config.get('pull_before_run', True):
             assert specific_image, ('Image must be included in config if '
@@ -228,6 +226,19 @@ class SkyDockerCommandRunner(DockerCommandRunner):
                     'Unable to deserialize `image_env` to Python object. '
                     f'The `image_env` is:\n{image_env}')
                 raise e
+
+            # Edit docker config first to avoid disconnecting the container
+            # from GPUs when a systemctl command is called. This is a known
+            # issue with nvidia container toolkit:
+            # https://github.com/NVIDIA/nvidia-container-toolkit/issues/48
+            self.run(
+                '[ -f /etc/docker/daemon.json ] || '
+                'echo "{}" | sudo tee /etc/docker/daemon.json;'
+                'sudo jq \'.["exec-opts"] = ["native.cgroupdriver=cgroupfs"]\' '
+                '/etc/docker/daemon.json > /tmp/daemon.json;'
+                'sudo mv /tmp/daemon.json /etc/docker/daemon.json;'
+                'sudo systemctl restart docker',
+                run_env='host')
 
             user_docker_run_options = self.docker_config.get(
                 'run_options', []) + self.docker_config.get(

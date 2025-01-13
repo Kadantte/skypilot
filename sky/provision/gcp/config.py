@@ -397,7 +397,7 @@ def _check_firewall_rules(cluster_name: str, vpc_name: str, project_id: str,
     operation = compute.networks().getEffectiveFirewalls(project=project_id,
                                                          network=vpc_name)
     response = operation.execute()
-    if len(response) == 0:
+    if not response:
         return False
     effective_rules = response['firewalls']
 
@@ -515,7 +515,7 @@ def _create_rules(project_id: str, compute, rules, vpc_name):
         rule_list = _list_firewall_rules(project_id,
                                          compute,
                                          filter=f'(name={rule_name})')
-        if len(rule_list) > 0:
+        if rule_list:
             _delete_firewall_rule(project_id, compute, rule_name)
 
         body = rule.copy()
@@ -624,7 +624,7 @@ def get_usable_vpc_and_subnet(
     vpc_list = _list_vpcnets(project_id,
                              compute,
                              filter=f'name={constants.SKYPILOT_VPC_NAME}')
-    if len(vpc_list) == 0:
+    if not vpc_list:
         body = constants.VPC_TEMPLATE.copy()
         body['name'] = body['name'].format(VPC_NAME=constants.SKYPILOT_VPC_NAME)
         body['selfLink'] = body['selfLink'].format(
@@ -670,9 +670,14 @@ def _configure_subnet(region: str, cluster_name: str,
         'accessConfigs': [{
             'name': 'External NAT',
             'type': 'ONE_TO_ONE_NAT',
-        }],
+        }]
     }]
-    if config.provider_config.get('use_internal_ips', False):
+    # Add gVNIC if specified in config
+    enable_gvnic = config.provider_config.get('enable_gvnic', False)
+    if enable_gvnic:
+        default_interfaces[0]['nicType'] = 'gVNIC'
+    enable_external_ips = _enable_external_ips(config)
+    if not enable_external_ips:
         # Removing this key means the VM will not be assigned an external IP.
         default_interfaces[0].pop('accessConfigs')
 
@@ -686,12 +691,17 @@ def _configure_subnet(region: str, cluster_name: str,
         node_config['networkConfig'] = copy.deepcopy(default_interfaces)[0]
         # TPU doesn't have accessConfigs
         node_config['networkConfig'].pop('accessConfigs', None)
-        if config.provider_config.get('use_internal_ips', False):
-            node_config['networkConfig']['enableExternalIps'] = False
-        else:
-            node_config['networkConfig']['enableExternalIps'] = True
+        node_config['networkConfig']['enableExternalIps'] = enable_external_ips
 
     return config
+
+
+def _enable_external_ips(config: common.ProvisionConfig) -> bool:
+    force_enable_external_ips = config.provider_config.get(
+        'force_enable_external_ips', False)
+    use_internal_ips = config.provider_config.get('use_internal_ips', False)
+
+    return force_enable_external_ips or not use_internal_ips
 
 
 def _delete_firewall_rule(project_id: str, compute, name):
