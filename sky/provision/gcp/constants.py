@@ -142,7 +142,7 @@ FIREWALL_RULES_TEMPLATE = [
 ]
 
 # A list of permissions required to run SkyPilot on GCP.
-# Keep this in sync with https://skypilot.readthedocs.io/en/latest/cloud-setup/cloud-permissions/gcp.html # pylint: disable=line-too-long
+# Keep this in sync with https://docs.skypilot.co/en/latest/cloud-setup/cloud-permissions/gcp.html # pylint: disable=line-too-long
 VM_MINIMAL_PERMISSIONS = [
     'compute.disks.create',
     'compute.disks.list',
@@ -196,6 +196,10 @@ FIREWALL_PERMISSIONS = [
     'compute.firewalls.delete',
 ]
 
+RESERVATION_PERMISSIONS = [
+    'compute.reservations.list',
+]
+
 TPU_MINIMAL_PERMISSIONS = [
     'tpu.nodes.create',
     'tpu.nodes.delete',
@@ -210,3 +214,9 @@ POLL_INTERVAL = 1
 MAX_POLLS = 60 // POLL_INTERVAL
 # Stopping instances can take several minutes, so we increase the timeout
 MAX_POLLS_STOP = MAX_POLLS * 8
+
+# MIG constants
+MANAGED_INSTANCE_GROUP_CONFIG = 'managed-instance-group'
+DEFAULT_MANAGED_INSTANCE_GROUP_PROVISION_TIMEOUT = 900  # 15 minutes
+MIG_NAME_PREFIX = 'sky-mig-'
+INSTANCE_TEMPLATE_NAME_PREFIX = 'sky-it-'

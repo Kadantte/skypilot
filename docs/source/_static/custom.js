@@ -5,9 +5,10 @@ document.addEventListener('DOMContentLoaded', function () {
        script.setAttribute('data-project-name', 'SkyPilot');
        script.setAttribute('data-project-color', '#4C4C4D');
        script.setAttribute('data-project-logo', 'https://avatars.githubusercontent.com/u/109387420?s=100&v=4');
-       script.setAttribute('data-modal-disclaimer', 'Results are automatically generated and may be inaccurate or contain inappropriate information. Do not include any sensitive information in your query.');
+       script.setAttribute('data-modal-disclaimer', 'Results are automatically generated and may be inaccurate or contain inappropriate information. Do not include any sensitive information in your query.\n**To get further assistance, you can chat directly with the development team** by joining the [SkyPilot Slack](https://slack.skypilot.co/).');
        script.setAttribute('data-modal-title', 'SkyPilot Docs AI - Ask a Question.');
-       script.setAttribute('data-button-position-bottom', '85px');
+       script.setAttribute('data-button-position-bottom', '100px');
+       script.setAttribute('data-user-analytics-fingerprint-enabled', 'true');
        script.async = true;
        document.head.appendChild(script);
 });
@@ -25,8 +26,9 @@ document.addEventListener('DOMContentLoaded', function () {
 document.addEventListener('DOMContentLoaded', () => {
     // New items:
     const newItems = [
-        { selector: '.caption-text', text: 'SkyServe: Model Serving' },
-        { selector: '.toctree-l1 > a', text: 'Running on Kubernetes' }
+        { selector: '.toctree-l1 > a', text: 'Many Parallel Jobs' },
+        { selector: '.toctree-l1 > a', text: 'Admin Policy Enforcement' },
+        { selector: '.toctree-l1 > a', text: 'Using Existing Machines' },
     ];
     newItems.forEach(({ selector, text }) => {
         document.querySelectorAll(selector).forEach((el) => {
@@ -35,4 +37,13 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     });
+});
+
+// Remove Previous button from every first page of each tab.
+document.addEventListener("DOMContentLoaded", function () {
+    if (window.location.pathname.endsWith('/') || window.location.pathname.endsWith('index.html')) {
+        var style = document.createElement('style');
+        style.innerHTML = '.prev-next-area a.left-prev { display: none; }';
+        document.head.appendChild(style);
+    }
 });

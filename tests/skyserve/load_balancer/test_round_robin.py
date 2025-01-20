@@ -16,7 +16,7 @@ if __name__ == '__main__':
 
     replica_ips = []
     for r in range(args.replica_num):
-        url = f'http://{args.endpoint}/get_ip'
+        url = f'{args.endpoint}/get_ip'
         resp = requests.get(url)
         assert resp.status_code == 200, resp.text
         assert 'ip' in resp.json(), resp.json()
@@ -24,11 +24,12 @@ if __name__ == '__main__':
         assert ip not in replica_ips
         replica_ips.append(ip)
 
-    assert set(args.replica_ips) == set(replica_ips)
+    assert set(args.replica_ips) == set(replica_ips), (args.replica_ips,
+                                                       replica_ips)
 
     for i in range(_REPEAT):
         for r in range(args.replica_num):
-            url = f'http://{args.endpoint}/get_ip'
+            url = f'{args.endpoint}/get_ip'
             resp = requests.get(url)
             assert resp.status_code == 200, resp.text
             assert 'ip' in resp.json(), resp.json()

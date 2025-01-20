@@ -19,7 +19,7 @@ if __name__ == '__main__':
         },
     ]
 
-    url = f'http://{args.endpoint}/v1/chat/completions'
+    url = f'{args.endpoint}/v1/chat/completions'
     resp = requests.post(url,
                          json={
                              'model': 'fastchat-t5-3b-v1.0',
@@ -27,4 +27,6 @@ if __name__ == '__main__':
                              'temperature': 0,
                          })
 
+    if resp.status_code != 200:
+        raise RuntimeError(f'Failed to get response: {resp.text}')
     print(resp.json()['choices'][0]['message']['content'])

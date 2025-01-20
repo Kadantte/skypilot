@@ -4,7 +4,6 @@ Usage:
     python fetch_fluidstack_cloud.py
 """
 
-import copy
 import csv
 import json
 import os
@@ -12,14 +11,167 @@ from typing import List
 
 import requests
 
-ENDPOINT = 'https://api.fluidstack.io/v1/plans'
+ENDPOINT = 'https://platform.fluidstack.io/list_available_configurations'
 DEFAULT_FLUIDSTACK_API_KEY_PATH = os.path.expanduser('~/.fluidstack/api_key')
-DEFAULT_FLUIDSTACK_API_TOKEN_PATH = os.path.expanduser(
-    '~/.fluidstack/api_token')
+
+plan_vcpus_memory = [{
+    'gpu_type': 'H100_SXM5_80GB',
+    'gpu_count': 1,
+    'min_cpu_count': 52,
+    'min_memory': 450
+}, {
+    'gpu_type': 'H100_SXM5_80GB',
+    'gpu_count': 2,
+    'min_cpu_count': 52,
+    'min_memory': 450
+}, {
+    'gpu_type': 'H100_SXM5_80GB',
+    'gpu_count': 4,
+    'min_cpu_count': 104,
+    'min_memory': 900
+}, {
+    'gpu_type': 'H100_SXM5_80GB',
+    'gpu_count': 8,
+    'min_cpu_count': 192,
+    'min_memory': 1800
+}, {
+    'gpu_type': 'RTX_A6000_48GB',
+    'gpu_count': 2,
+    'min_cpu_count': 12,
+    'min_memory': 110.0
+}, {
+    'gpu_type': 'RTX_A6000_48GB',
+    'gpu_count': 4,
+    'min_cpu_count': 24,
+    'min_memory': 220.0
+}, {
+    'gpu_type': 'A100_NVLINK_80GB',
+    'gpu_count': 8,
+    'min_cpu_count': 252,
+    'min_memory': 960.0
+}, {
+    'gpu_type': 'H100_PCIE_80GB',
+    'gpu_count': 8,
+    'min_cpu_count': 252,
+    'min_memory': 1440.0
+}, {
+    'gpu_type': 'RTX_A4000_16GB',
+    'gpu_count': 2,
+    'min_cpu_count': 12,
+    'min_memory': 48.0
+}, {
+    'gpu_type': 'H100_PCIE_80GB',
+    'gpu_count': 2,
+    'min_cpu_count': 60,
+    'min_memory': 360.0
+}, {
+    'gpu_type': 'RTX_A6000_48GB',
+    'gpu_count': 8,
+    'min_cpu_count': 252,
+    'min_memory': 464.0
+}, {
+    'gpu_type': 'H100_NVLINK_80GB',
+    'gpu_count': 8,
+    'min_cpu_count': 252,
+    'min_memory': 1440.0
+}, {
+    'gpu_type': 'H100_PCIE_80GB',
+    'gpu_count': 1,
+    'min_cpu_count': 28,
+    'min_memory': 180.0
+}, {
+    'gpu_type': 'RTX_A5000_24GB',
+    'gpu_count': 1,
+    'min_cpu_count': 8,
+    'min_memory': 30.0
+}, {
+    'gpu_type': 'RTX_A5000_24GB',
+    'gpu_count': 2,
+    'min_cpu_count': 16,
+    'min_memory': 60.0
+}, {
+    'gpu_type': 'L40_48GB',
+    'gpu_count': 2,
+    'min_cpu_count': 64,
+    'min_memory': 120.0
+}, {
+    'gpu_type': 'RTX_A4000_16GB',
+    'gpu_count': 8,
+    'min_cpu_count': 48,
+    'min_memory': 192.0
+}, {
+    'gpu_type': 'RTX_A4000_16GB',
+    'gpu_count': 1,
+    'min_cpu_count': 6,
+    'min_memory': 24.0
+}, {
+    'gpu_type': 'RTX_A4000_16GB',
+    'gpu_count': 4,
+    'min_cpu_count': 24,
+    'min_memory': 96.0
+}, {
+    'gpu_type': 'A100_PCIE_80GB',
+    'gpu_count': 4,
+    'min_cpu_count': 124,
+    'min_memory': 480.0
+}, {
+    'gpu_type': 'H100_PCIE_80GB',
+    'gpu_count': 4,
+    'min_cpu_count': 124,
+    'min_memory': 720.0
+}, {
+    'gpu_type': 'L40_48GB',
+    'gpu_count': 8,
+    'min_cpu_count': 252,
+    'min_memory': 480.0
+}, {
+    'gpu_type': 'RTX_A5000_24GB',
+    'gpu_count': 8,
+    'min_cpu_count': 64,
+    'min_memory': 240.0
+}, {
+    'gpu_type': 'L40_48GB',
+    'gpu_count': 1,
+    'min_cpu_count': 32,
+    'min_memory': 60.0
+}, {
+    'gpu_type': 'RTX_A6000_48GB',
+    'gpu_count': 1,
+    'min_cpu_count': 6,
+    'min_memory': 55.0
+}, {
+    'gpu_type': 'L40_48GB',
+    'gpu_count': 4,
+    'min_cpu_count': 126,
+    'min_memory': 240.0
+}, {
+    'gpu_type': 'A100_PCIE_80GB',
+    'gpu_count': 1,
+    'min_cpu_count': 28,
+    'min_memory': 120.0
+}, {
+    'gpu_type': 'A100_PCIE_80GB',
+    'gpu_count': 8,
+    'min_cpu_count': 252,
+    'min_memory': 1440.0
+}, {
+    'gpu_type': 'A100_PCIE_80GB',
+    'gpu_count': 2,
+    'min_cpu_count': 60,
+    'min_memory': 240.0
+}, {
+    'gpu_type': 'RTX_A5000_24GB',
+    'gpu_count': 4,
+    'min_cpu_count': 32,
+    'min_memory': 120.0
+}]
 
 GPU_MAP = {
     'H100_PCIE_80GB': 'H100',
-    'A100_SXM4_80GB': 'A100-80GB',
+    'H100_NVLINK_80GB': 'H100',
+    'A100_NVLINK_80GB': 'A100-80GB',
+    'A100_SXM4_80GB': 'A100-80GB-SXM',
+    'H100_SXM5_80GB': 'H100-SXM',
     'A100_PCIE_80GB': 'A100-80GB',
     'A100_SXM4_40GB': 'A100',
     'A100_PCIE_40GB': 'A100',
@@ -40,62 +192,22 @@ GPU_MAP = {
     'RTX_3080_10GB': 'RTX3080',
 }
 
-CUSTOM_PLANS_CONFIG = [
-    dict(gpu_count=1, cpu_count=8, nvme_storage=750, ram=64),
-    dict(gpu_count=2, cpu_count=16, nvme_storage=1024, ram=128),
-    #dict(gpu_count=4, cpu_count=32, nvme_storage=1200, ram=160),
-    #dict(gpu_count=8, cpu_count=64, nvme_storage=1500, ram=200)
-]
-
 
 def get_regions(plans: List) -> dict:
     """Return a list of regions where the plan is available."""
     regions = {}
     for plan in plans:
         for region in plan.get('regions', []):
-            regions[region['id']] = region['id']
+            regions[region] = region
     return regions
 
 
-def plans_from_custom_plan(plan: dict) -> List[dict]:
-    prices = dict(cpu=plan['price']['cpu']['hourly'],
-                  ram=plan['price']['ram']['hourly'],
-                  storage=plan['price']['storage']['hourly'],
-                  gpu=plan['price']['gpu']['hourly'])
-    new_plans = []
-    for i, config in enumerate(CUSTOM_PLANS_CONFIG):
-        new_plan = copy.deepcopy(plan)
-        price = (prices['cpu'] *
-                 config['cpu_count']) + (prices['ram'] * config['ram']) + (
-                     prices['storage'] * config['nvme_storage']) + (
-                         prices['gpu'] * config['gpu_count'])
-        new_plan['price']['hourly'] = price / config['gpu_count']
-        new_plan['configuration']['core_count'] = config['cpu_count']
-        new_plan['configuration']['ram'] = config['ram']
-        new_plan['configuration']['gpu_count'] = config['gpu_count']
-        new_plan['configuration']['nvme_storage'] = config['nvme_storage']
-        new_plan['plan_id'] = f'custom:{i}:{plan["plan_id"]}'
-        new_plans.append(new_plan)
-    return new_plans
-
-
 def create_catalog(output_dir: str) -> None:
-    response = requests.get(ENDPOINT)
+    with open(DEFAULT_FLUIDSTACK_API_KEY_PATH, 'r', encoding='UTF-8') as f:
+        api_key = f.read().strip()
+    response = requests.get(ENDPOINT, headers={'api-key': api_key})
     plans = response.json()
-    custom_plans = [
-        plan for plan in plans if plan['minimum_commitment'] == 'hourly' and
-        plan['type'] in ['custom'] and plan['gpu_type'] != 'NO GPU'
-    ]
-    #plans = [plan for plan in plans if len(plan['regions']) > 0]
-    plans = [
-        plan for plan in plans if plan['minimum_commitment'] == 'hourly' and
-        plan['type'] in ['preconfigured'] and
-        plan['gpu_type'] not in ['NO GPU', 'RTX_3080_10GB', 'RTX_3090_24GB']
-    ]
 
-    plans = plans + [
-        plan for plan in custom_plans for plan in plans_from_custom_plan(plan)
-    ]
     with open(os.path.join(output_dir, 'vms.csv'), mode='w',
               encoding='utf-8') as f:
         writer = csv.writer(f, delimiter=',', quotechar='"')
@@ -114,41 +226,47 @@ def create_catalog(output_dir: str) -> None:
             try:
                 gpu = GPU_MAP[plan['gpu_type']]
             except KeyError:
-                print(f'Could not map {plan["gpu_type"]}')
+                #print(f'Could not map {plan["gpu_type"]}')
                 continue
-            gpu_memory = int(
-                str(plan['configuration']['gpu_memory']).replace('GB',
-                                                                 '')) * 1024
-            gpu_cnt = int(plan['configuration']['gpu_count'])
-            vcpus = float(plan['configuration']['core_count'])
-            mem = float(plan['configuration']['ram'])
-            price = float(plan['price']['hourly']) * gpu_cnt
-            gpuinfo = {
-                'Gpus': [{
-                    'Name': gpu,
-                    'Manufacturer': 'NVIDIA',
-                    'Count': gpu_cnt,
-                    'MemoryInfo': {
-                        'SizeInMiB': int(gpu_memory)
-                    },
-                }],
-                'TotalGpuMemoryInMiB': int(gpu_memory * gpu_cnt),
-            }
-            gpuinfo = json.dumps(gpuinfo).replace('"', "'")  # pylint: disable=invalid-string-quote
-            for r in plan.get('regions', []):
-                if r['id'] == 'india_2':
+            for gpu_cnt in plan['gpu_counts']:
+                gpu_memory = float(plan['gpu_type'].split('_')[-1].replace(
+                    'GB', '')) * 1024
+                try:
+                    vcpus_mem = [
+                        x for x in plan_vcpus_memory
+                        if x['gpu_type'] == plan['gpu_type'] and
+                        x['gpu_count'] == gpu_cnt
+                    ][0]
+                    vcpus = vcpus_mem['min_cpu_count']
+                    mem = vcpus_mem['min_memory']
+                except IndexError:
                     continue
-                writer.writerow([
-                    plan['plan_id'],
-                    gpu,
-                    gpu_cnt,
-                    vcpus,
-                    mem,
-                    price,
-                    r['id'],
-                    gpuinfo,
-                    '',
-                ])
+                price = float(plan['price_per_gpu_hr']) * gpu_cnt
+                gpuinfo = {
+                    'Gpus': [{
+                        'Name': gpu,
+                        'Manufacturer': 'NVIDIA',
+                        'Count': gpu_cnt,
+                        'MemoryInfo': {
+                            'SizeInMiB': int(gpu_memory)
+                        },
+                    }],
+                    'TotalGpuMemoryInMiB': int(gpu_memory * gpu_cnt),
+                }
+                gpuinfo = json.dumps(gpuinfo).replace('"', "'")  # pylint: disable=invalid-string-quote
+                instance_type = f'{plan["gpu_type"]}::{gpu_cnt}'
+                for region in plan.get('regions', []):
+                    writer.writerow([
+                        instance_type,
+                        gpu,
+                        gpu_cnt,
+                        vcpus,
+                        mem,
+                        price,
+                        region,
+                        gpuinfo,
+                        '',
+                    ])
 
 
 if __name__ == '__main__':

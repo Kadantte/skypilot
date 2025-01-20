@@ -2,11 +2,14 @@
 import json
 import os
 import textwrap
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
+from sky import serve
 from sky.serve import constants
+from sky.serve import load_balancing_policies as lb_policies
+from sky.serve import serve_utils
 from sky.utils import common_utils
 from sky.utils import schemas
 from sky.utils import ux_utils
@@ -19,65 +22,68 @@ class SkyServiceSpec:
         self,
         readiness_path: str,
         initial_delay_seconds: int,
+        readiness_timeout_seconds: int,
         min_replicas: int,
         max_replicas: Optional[int] = None,
         target_qps_per_replica: Optional[float] = None,
         post_data: Optional[Dict[str, Any]] = None,
+        tls_credential: Optional[serve_utils.TLSCredential] = None,
+        readiness_headers: Optional[Dict[str, str]] = None,
         dynamic_ondemand_fallback: Optional[bool] = None,
         base_ondemand_fallback_replicas: Optional[int] = None,
         upscale_delay_seconds: Optional[int] = None,
         downscale_delay_seconds: Optional[int] = None,
-        # The following arguments are deprecated.
-        # TODO(ziming): remove this after 2 minor release, i.e. 0.6.0.
-        # Deprecated: Always be True
-        auto_restart: Optional[bool] = None,
-        # Deprecated: replaced by the target_qps_per_replica.
-        qps_upper_threshold: Optional[float] = None,
-        qps_lower_threshold: Optional[float] = None,
+        load_balancing_policy: Optional[str] = None,
     ) -> None:
         if max_replicas is not None and max_replicas < min_replicas:
             with ux_utils.print_exception_no_traceback():
-                raise ValueError(
-                    'max_replicas must be greater than or equal to min_replicas'
-                )
+                raise ValueError('max_replicas must be greater than or '
+                                 'equal to min_replicas. Found: '
+                                 f'min_replicas={min_replicas}, '
+                                 f'max_replicas={max_replicas}')
 
-        if target_qps_per_replica is not None and max_replicas is None:
-            with ux_utils.print_exception_no_traceback():
-                raise ValueError('max_replicas must be set where '
-                                 'target_qps_per_replica is set.')
+        if target_qps_per_replica is not None:
+            if max_replicas is None:
+                with ux_utils.print_exception_no_traceback():
+                    raise ValueError('max_replicas must be set where '
+                                     'target_qps_per_replica is set.')
+        else:
+            if max_replicas is not None and max_replicas != min_replicas:
+                with ux_utils.print_exception_no_traceback():
+                    raise ValueError(
+                        'Detected different min_replicas and max_replicas '
+                        'while target_qps_per_replica is not set. To enable '
+                        'autoscaling, please set target_qps_per_replica.')
 
         if not readiness_path.startswith('/'):
             with ux_utils.print_exception_no_traceback():
                 raise ValueError('readiness_path must start with a slash (/). '
                                  f'Got: {readiness_path}')
 
-        if qps_upper_threshold is not None or qps_lower_threshold is not None:
+        # Add the check for unknown load balancing policies
+        if (load_balancing_policy is not None and
+                load_balancing_policy not in serve.LB_POLICIES):
             with ux_utils.print_exception_no_traceback():
                 raise ValueError(
-                    'Field `qps_upper_threshold` and `qps_lower_threshold`'
-                    'under `replica_policy` are deprecated. '
-                    'Please use target_qps_per_replica instead.')
-
-        if auto_restart is not None:
-            with ux_utils.print_exception_no_traceback():
-                raise ValueError(
-                    'Field `auto_restart` under `replica_policy` is deprecated.'
-                    'Currently, SkyServe will cleanup failed replicas'
-                    'and auto restart it to keep the service running.')
-
+                    f'Unknown load balancing policy: {load_balancing_policy}. '
+                    f'Available policies: {list(serve.LB_POLICIES.keys())}')
         self._readiness_path: str = readiness_path
         self._initial_delay_seconds: int = initial_delay_seconds
+        self._readiness_timeout_seconds: int = readiness_timeout_seconds
         self._min_replicas: int = min_replicas
         self._max_replicas: Optional[int] = max_replicas
         self._target_qps_per_replica: Optional[float] = target_qps_per_replica
         self._post_data: Optional[Dict[str, Any]] = post_data
+        self._tls_credential: Optional[serve_utils.TLSCredential] = (
+            tls_credential)
+        self._readiness_headers: Optional[Dict[str, str]] = readiness_headers
         self._dynamic_ondemand_fallback: Optional[
             bool] = dynamic_ondemand_fallback
         self._base_ondemand_fallback_replicas: Optional[
             int] = base_ondemand_fallback_replicas
-        # _spot_locations will be set by set_spot_locations.
         self._upscale_delay_seconds: Optional[int] = upscale_delay_seconds
         self._downscale_delay_seconds: Optional[int] = downscale_delay_seconds
+        self._load_balancing_policy: Optional[str] = load_balancing_policy
 
         self._use_ondemand_fallback: bool = (
             self.dynamic_ondemand_fallback is not None and
@@ -102,14 +108,23 @@ class SkyServiceSpec:
             service_config['readiness_path'] = readiness_section
             initial_delay_seconds = None
             post_data = None
+            readiness_timeout_seconds = None
+            readiness_headers = None
         else:
             service_config['readiness_path'] = readiness_section['path']
             initial_delay_seconds = readiness_section.get(
                 'initial_delay_seconds', None)
             post_data = readiness_section.get('post_data', None)
+            readiness_timeout_seconds = readiness_section.get(
+                'timeout_seconds', None)
+            readiness_headers = readiness_section.get('headers', None)
         if initial_delay_seconds is None:
             initial_delay_seconds = constants.DEFAULT_INITIAL_DELAY_SECONDS
         service_config['initial_delay_seconds'] = initial_delay_seconds
+        if readiness_timeout_seconds is None:
+            readiness_timeout_seconds = (
+                constants.DEFAULT_READINESS_PROBE_TIMEOUT_SECONDS)
+        service_config['readiness_timeout_seconds'] = readiness_timeout_seconds
         if isinstance(post_data, str):
             try:
                 post_data = json.loads(post_data)
@@ -120,6 +135,7 @@ class SkyServiceSpec:
                         '`readiness_probe` section of your service YAML.'
                     ) from e
         service_config['post_data'] = post_data
+        service_config['readiness_headers'] = readiness_headers
 
         policy_section = config.get('replica_policy', None)
         simplified_policy_section = config.get('replicas', None)
@@ -137,14 +153,8 @@ class SkyServiceSpec:
             service_config['min_replicas'] = policy_section['min_replicas']
             service_config['max_replicas'] = policy_section.get(
                 'max_replicas', None)
-            service_config['qps_upper_threshold'] = policy_section.get(
-                'qps_upper_threshold', None)
-            service_config['qps_lower_threshold'] = policy_section.get(
-                'qps_lower_threshold', None)
             service_config['target_qps_per_replica'] = policy_section.get(
                 'target_qps_per_replica', None)
-            service_config['auto_restart'] = policy_section.get(
-                'auto_restart', None)
             service_config['upscale_delay_seconds'] = policy_section.get(
                 'upscale_delay_seconds', None)
             service_config['downscale_delay_seconds'] = policy_section.get(
@@ -154,6 +164,16 @@ class SkyServiceSpec:
                     'base_ondemand_fallback_replicas', None)
             service_config['dynamic_ondemand_fallback'] = policy_section.get(
                 'dynamic_ondemand_fallback', None)
+
+        service_config['load_balancing_policy'] = config.get(
+            'load_balancing_policy', None)
+
+        tls_section = config.get('tls', None)
+        if tls_section is not None:
+            service_config['tls_credential'] = serve_utils.TLSCredential(
+                keyfile=tls_section.get('keyfile', None),
+                certfile=tls_section.get('certfile', None),
+            )
 
         return SkyServiceSpec(**service_config)
 
@@ -178,9 +198,12 @@ class SkyServiceSpec:
         return SkyServiceSpec.from_yaml_config(config['service'])
 
     def to_yaml_config(self) -> Dict[str, Any]:
-        config = dict()
+        config: Dict[str, Any] = {}
 
-        def add_if_not_none(section, key, value, no_empty: bool = False):
+        def add_if_not_none(section: str,
+                            key: Optional[str],
+                            value: Any,
+                            no_empty: bool = False):
             if no_empty and not value:
                 return
             if value is not None:
@@ -195,6 +218,9 @@ class SkyServiceSpec:
         add_if_not_none('readiness_probe', 'initial_delay_seconds',
                         self.initial_delay_seconds)
         add_if_not_none('readiness_probe', 'post_data', self.post_data)
+        add_if_not_none('readiness_probe', 'timeout_seconds',
+                        self.readiness_timeout_seconds)
+        add_if_not_none('readiness_probe', 'headers', self._readiness_headers)
         add_if_not_none('replica_policy', 'min_replicas', self.min_replicas)
         add_if_not_none('replica_policy', 'max_replicas', self.max_replicas)
         add_if_not_none('replica_policy', 'target_qps_per_replica',
@@ -207,15 +233,24 @@ class SkyServiceSpec:
                         self.upscale_delay_seconds)
         add_if_not_none('replica_policy', 'downscale_delay_seconds',
                         self.downscale_delay_seconds)
+        add_if_not_none('load_balancing_policy', None,
+                        self._load_balancing_policy)
+        if self.tls_credential is not None:
+            add_if_not_none('tls', 'keyfile', self.tls_credential.keyfile)
+            add_if_not_none('tls', 'certfile', self.tls_credential.certfile)
         return config
 
     def probe_str(self):
         if self.post_data is None:
-            return f'GET {self.readiness_path}'
-        return f'POST {self.readiness_path} {json.dumps(self.post_data)}'
+            method = f'GET {self.readiness_path}'
+        else:
+            method = f'POST {self.readiness_path} {json.dumps(self.post_data)}'
+        headers = ('' if self.readiness_headers is None else
+                   ' with custom headers')
+        return f'{method}{headers}'
 
-    def spot_policy_str(self):
-        policy_strs = []
+    def spot_policy_str(self) -> str:
+        policy_strs: List[str] = []
         if (self.dynamic_ondemand_fallback is not None and
                 self.dynamic_ondemand_fallback):
             policy_strs.append('Dynamic on-demand fallback')
@@ -230,24 +265,38 @@ class SkyServiceSpec:
                 policy_strs.append('Static spot mixture with '
                                    f'{self.base_ondemand_fallback_replicas} '
                                    f'base on-demand replica{plural}')
-        return ' '.join(policy_strs) if policy_strs else 'No spot policy'
+        if not policy_strs:
+            return 'No spot fallback policy'
+        return ' '.join(policy_strs)
 
     def autoscaling_policy_str(self):
         # TODO(MaoZiming): Update policy_str
         min_plural = '' if self.min_replicas == 1 else 's'
         if self.max_replicas == self.min_replicas or self.max_replicas is None:
             return f'Fixed {self.min_replicas} replica{min_plural}'
+        # Already checked in __init__.
+        assert self.target_qps_per_replica is not None
         # TODO(tian): Refactor to contain more information
         max_plural = '' if self.max_replicas == 1 else 's'
-        return (f'Autoscaling from {self.min_replicas} to '
-                f'{self.max_replicas} replica{max_plural}')
+        return (f'Autoscaling from {self.min_replicas} to {self.max_replicas} '
+                f'replica{max_plural} (target QPS per replica: '
+                f'{self.target_qps_per_replica})')
+
+    def tls_str(self):
+        if self.tls_credential is None:
+            return 'No TLS Enabled'
+        return (f'Keyfile: {self.tls_credential.keyfile}, '
+                f'Certfile: {self.tls_credential.certfile}')
 
     def __repr__(self) -> str:
         return textwrap.dedent(f"""\
             Readiness probe method:           {self.probe_str()}
             Readiness initial delay seconds:  {self.initial_delay_seconds}
+            Readiness probe timeout seconds:  {self.readiness_timeout_seconds}
             Replica autoscaling policy:       {self.autoscaling_policy_str()}
+            TLS Certificates:                 {self.tls_str()}
             Spot Policy:                      {self.spot_policy_str()}
+            Load Balancing Policy:            {self.load_balancing_policy}
         """)
 
     @property
@@ -257,6 +306,10 @@ class SkyServiceSpec:
     @property
     def initial_delay_seconds(self) -> int:
         return self._initial_delay_seconds
+
+    @property
+    def readiness_timeout_seconds(self) -> int:
+        return self._readiness_timeout_seconds
 
     @property
     def min_replicas(self) -> int:
@@ -274,6 +327,19 @@ class SkyServiceSpec:
     @property
     def post_data(self) -> Optional[Dict[str, Any]]:
         return self._post_data
+
+    @property
+    def tls_credential(self) -> Optional[serve_utils.TLSCredential]:
+        return self._tls_credential
+
+    @tls_credential.setter
+    def tls_credential(self,
+                       value: Optional[serve_utils.TLSCredential]) -> None:
+        self._tls_credential = value
+
+    @property
+    def readiness_headers(self) -> Optional[Dict[str, str]]:
+        return self._readiness_headers
 
     @property
     def base_ondemand_fallback_replicas(self) -> Optional[int]:
@@ -294,3 +360,8 @@ class SkyServiceSpec:
     @property
     def use_ondemand_fallback(self) -> bool:
         return self._use_ondemand_fallback
+
+    @property
+    def load_balancing_policy(self) -> str:
+        return lb_policies.LoadBalancingPolicy.make_policy_name(
+            self._load_balancing_policy)

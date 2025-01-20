@@ -6,16 +6,20 @@ queried from GCP API.
 import typing
 from typing import Dict, List, Optional, Tuple
 
-import pandas as pd
-
 from sky import exceptions
 from sky import sky_logging
+from sky.adaptors import common as adaptors_common
+from sky.clouds import GCP
 from sky.clouds.service_catalog import common
 from sky.utils import resources_utils
 from sky.utils import ux_utils
 
 if typing.TYPE_CHECKING:
+    import pandas as pd
+
     from sky.clouds import cloud
+else:
+    pd = adaptors_common.LazyImport('pandas')
 
 logger = sky_logging.init_logger(__name__)
 
@@ -93,7 +97,13 @@ _ACC_INSTANCE_TYPE_DICTS = {
         8: ['g2-standard-96'],
     },
     'H100': {
+        1: ['a3-highgpu-1g'],
+        2: ['a3-highgpu-2g'],
+        4: ['a3-highgpu-4g'],
         8: ['a3-highgpu-8g'],
+    },
+    'H100-MEGA': {
+        8: ['a3-megagpu-8g'],
     }
 }
 
@@ -240,7 +250,6 @@ def get_default_instance_type(
         cpus: Optional[str] = None,
         memory: Optional[str] = None,
         disk_tier: Optional[resources_utils.DiskTier] = None) -> Optional[str]:
-    del disk_tier  # unused
     if cpus is None and memory is None:
         cpus = f'{_DEFAULT_NUM_VCPUS}+'
     if memory is None:
@@ -251,6 +260,12 @@ def get_default_instance_type(
         f'{family}-' for family in _DEFAULT_INSTANCE_FAMILY)
     df = _df[_df['InstanceType'].notna()]
     df = df[df['InstanceType'].str.startswith(instance_type_prefix)]
+
+    def _filter_disk_type(instance_type: str) -> bool:
+        valid, _ = GCP.check_disk_tier(instance_type, disk_tier)
+        return valid
+
+    df = df.loc[df['InstanceType'].apply(_filter_disk_type)]
     return common.get_instance_type_for_cpus_mem_impl(df, cpus,
                                                       memory_gb_or_ratio)
 
@@ -277,7 +292,9 @@ def get_instance_type_for_accelerator(
 
     if acc_name in _ACC_INSTANCE_TYPE_DICTS:
         df = _df[_df['InstanceType'].notna()]
-        instance_types = _ACC_INSTANCE_TYPE_DICTS[acc_name][acc_count]
+        instance_types = _ACC_INSTANCE_TYPE_DICTS[acc_name].get(acc_count, None)
+        if instance_types is None:
+            return None, []
         df = df[df['InstanceType'].isin(instance_types)]
 
         # Check the cpus and memory specified by the user.
@@ -323,12 +340,12 @@ def get_region_zones_for_instance_type(instance_type: str,
 
 
 def _get_accelerator(
-    df: pd.DataFrame,
+    df: 'pd.DataFrame',
     accelerator: str,
     count: int,
     region: Optional[str],
     zone: Optional[str] = None,
-) -> pd.DataFrame:
+) -> 'pd.DataFrame':
     idx = (df['AcceleratorName'].str.fullmatch(
         accelerator, case=False)) & (df['AcceleratorCount'] == count)
     if region is not None:
